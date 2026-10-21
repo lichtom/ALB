@@ -1,0 +1,26 @@
+{
+  "generated": "2026-10-21",
+  "note": "Auto-generated library manifest. Regenerate after adding/removing lib files.",
+  "platforms": [
+    {
+      "name": "macOS",
+      "files": [
+        "agame.zip",
+        "gui.zip",
+        "io.zip",
+        "math.zip",
+        "string.zip"
+      ]
+    },
+    {
+      "name": "Unix",
+      "files": [
+        "agame.tar.gz",
+        "gui.tar.gz",
+        "io.tar.gz",
+        "math.tar.gz",
+        "string.tar.gz"
+      ]
+    }
+  ]
+}

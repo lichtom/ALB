@@ -427,8 +427,12 @@ body {
 
 <script>
 // ── Config ──
-const LIB_API  = 'https://api.github.com/repos/lichtom/ALB/contents/lib';
-const LIB_BASE = 'https://lichtom.github.io/ALB/lib';
+// Absolute base for copy/download links (production GitHub Pages URL)
+const LIB_BASE     = 'https://lichtom.github.io/ALB/lib';
+// Primary source: same-origin static manifest (no rate limit, no CORS)
+const MANIFEST_URL = 'lib/manifest.json';
+// Fallback source: GitHub Contents API (may be rate-limited: 60 req/hour)
+const GH_API       = 'https://api.github.com/repos/lichtom/ALB/contents/lib';
 
 // Platform display metadata
 const PLATFORM_META = {
@@ -478,69 +482,92 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// Build one platform section (header + card grid) and append to container
+function renderPlatform(container, platformName, fileNames) {
+  const meta = platformMeta(platformName);
+  const section = document.createElement('div');
+  section.className = 'lib-platform';
+
+  const iconHtml = meta.icon
+    ? '<img src="' + meta.icon + '" alt="' + meta.label + '">'
+    : '<span class="emoji">' + meta.emoji + '</span>';
+
+  section.innerHTML =
+    '<div class="lib-platform-head">' + iconHtml +
+    '<h3>' + meta.label + '</h3>' +
+    '<span class="count">' + fileNames.length + ' libraries</span></div>';
+
+  const grid = document.createElement('div');
+  grid.className = 'lib-grid';
+
+  fileNames.forEach(fname => {
+    const url = LIB_BASE + '/' + platformName + '/' + fname;
+    const card = document.createElement('div');
+    card.className = 'lib-card';
+    card.innerHTML =
+      '<div class="lib-name"><span class="dot"></span>' + libName(fname) + '</div>' +
+      '<div class="lib-url">' + url + '</div>' +
+      '<div class="lib-actions">' +
+        '<button class="copy-btn">Copy Link</button>' +
+        '<a class="dl-btn" href="' + url + '" download>Download</a>' +
+      '</div>';
+    card.querySelector('.copy-btn').addEventListener('click', function () {
+      copyLink(url, this);
+    });
+    grid.appendChild(card);
+  });
+
+  section.appendChild(grid);
+  container.appendChild(section);
+}
+
+// Primary loader: read the static manifest.json (same-origin, never rate-limited)
+async function loadFromManifest(container) {
+  const manifest = await fetchJSON(MANIFEST_URL);
+  const platforms = (manifest && Array.isArray(manifest.platforms)) ? manifest.platforms : [];
+  if (platforms.length === 0) throw new Error('empty manifest');
+  container.innerHTML = '';
+  container.classList.remove('lib-loading');
+  platforms.forEach(p => {
+    if (p && Array.isArray(p.files) && p.files.length) {
+      renderPlatform(container, p.name, p.files.slice().sort());
+    }
+  });
+}
+
+// Fallback loader: query the GitHub Contents API (subject to rate limits)
+async function loadFromGitHubAPI(container) {
+  const root = await fetchJSON(GH_API);
+  const dirs = Array.isArray(root) ? root.filter(x => x.type === 'dir') : [];
+  if (dirs.length === 0) throw new Error('no folders');
+  const order = { 'macOS': 0, 'Unix': 1, 'Linux': 2, 'Windows': 3 };
+  dirs.sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
+  container.innerHTML = '';
+  container.classList.remove('lib-loading');
+  for (const dir of dirs) {
+    const files = await fetchJSON(GH_API + '/' + encodeURIComponent(dir.name));
+    const list = Array.isArray(files)
+      ? files.filter(x => x.type === 'file' && /\.(zip|tar\.gz|tgz|tar)$/i.test(x.name))
+      : [];
+    if (list.length === 0) continue;
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    renderPlatform(container, dir.name, list.map(f => f.name));
+  }
+}
+
 async function loadLibs() {
   const container = document.getElementById('lib-cards');
+  // 1) Try the static manifest first (fast, reliable, no rate limit)
   try {
-    // 1) list top-level folders (platforms)
-    const root = await fetchJSON(LIB_API);
-    const dirs = Array.isArray(root) ? root.filter(x => x.type === 'dir') : [];
-    if (dirs.length === 0) {
-      container.innerHTML = '<p class="lib-loading">No platform libraries found.</p>';
-      return;
-    }
-
-    // Sort: macOS, Unix, others
-    const order = { 'macOS': 0, 'Unix': 1, 'Linux': 2, 'Windows': 3 };
-    dirs.sort((a, b) => (order[a.name] ?? 9) - (order[b.name] ?? 9));
-
-    container.innerHTML = '';
-    container.classList.remove('lib-loading');
-
-    // 2) for each folder, list files and build cards
-    for (const dir of dirs) {
-      const files = await fetchJSON(LIB_API + '/' + encodeURIComponent(dir.name));
-      const list = Array.isArray(files)
-        ? files.filter(x => x.type === 'file' && /\.(zip|tar\.gz|tgz|tar)$/i.test(x.name))
-        : [];
-      if (list.length === 0) continue;
-      list.sort((a, b) => a.name.localeCompare(b.name));
-
-      const meta = platformMeta(dir.name);
-      const section = document.createElement('div');
-      section.className = 'lib-platform';
-
-      const iconHtml = meta.icon
-        ? '<img src="' + meta.icon + '" alt="' + meta.label + '">'
-        : '<span class="emoji">' + meta.emoji + '</span>';
-
-      section.innerHTML =
-        '<div class="lib-platform-head">' + iconHtml +
-        '<h3>' + meta.label + '</h3>' +
-        '<span class="count">' + list.length + ' libraries</span></div>';
-
-      const grid = document.createElement('div');
-      grid.className = 'lib-grid';
-
-      list.forEach(f => {
-        const url = LIB_BASE + '/' + dir.name + '/' + f.name;
-        const card = document.createElement('div');
-        card.className = 'lib-card';
-        card.innerHTML =
-          '<div class="lib-name"><span class="dot"></span>' + libName(f.name) + '</div>' +
-          '<div class="lib-url">' + url + '</div>' +
-          '<div class="lib-actions">' +
-            '<button class="copy-btn">Copy Link</button>' +
-            '<a class="dl-btn" href="' + url + '" download>Download</a>' +
-          '</div>';
-        card.querySelector('.copy-btn').addEventListener('click', function () {
-          copyLink(url, this);
-        });
-        grid.appendChild(card);
-      });
-
-      section.appendChild(grid);
-      container.appendChild(section);
-    }
+    await loadFromManifest(container);
+    return;
+  } catch (e) {
+    // fall through to the GitHub API
+  }
+  // 2) Fallback: GitHub Contents API
+  try {
+    await loadFromGitHubAPI(container);
+    return;
   } catch (err) {
     container.innerHTML =
       '<p class="lib-loading">⚠️ Failed to load library list (' + err.message + '). ' +
